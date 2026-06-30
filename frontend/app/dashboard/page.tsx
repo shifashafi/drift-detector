@@ -92,6 +92,13 @@ export default function Dashboard() {
             </svg>
             Refresh
           </button>
+          <a href="/test-cases" style={{
+  padding: "6px 12px", borderRadius: 8, fontSize: 13,
+  border: "1px solid var(--border-strong)", background: "transparent",
+  color: "var(--text-secondary)", textDecoration: "none",
+}}>
+  Test cases
+</a>
           <button onClick={handleTrigger} disabled={running} style={{
             padding: "6px 14px", borderRadius: 8, fontSize: 13, fontWeight: 500,
             border: "1px solid rgba(108,99,255,0.4)",

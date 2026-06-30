@@ -1,159 +1,124 @@
 # Behavioral Drift Detector
 
-> Detect when your LLM starts behaving differently over time — before your users notice.
+> Know when your LLM starts behaving differently — before your users do.
 
-Every team deploying LLMs faces the same invisible problem: models silently change. A cloud provider updates their model, your prompt templates shift slightly, or data distribution creeps — and suddenly your LLM is giving different answers than it was last week. There's no open-source tooling for this. This project builds it.
+![Status](https://img.shields.io/badge/status-active-22d98a?style=flat-square) ![Stack](https://img.shields.io/badge/stack-Next.js%20%7C%20FastAPI%20%7C%20Ollama-6c63ff?style=flat-square) ![Cost](https://img.shields.io/badge/cost-$0-22d98a?style=flat-square)
 
----
+## The Problem
 
-## What it does
+Every team deploying LLMs faces the same invisible problem: models silently change. A provider updates their model, your prompts drift slightly, or data distribution shifts — and suddenly your LLM gives different answers than last week. There's no open-source tooling to catch this. This project builds it.
 
-- **Defines behavioral baselines** via golden test cases (prompt + expected behavior)
-- **Runs evals on a schedule** using local Ollama models (zero cost, zero rate limits)
-- **Scores semantic drift** with sentence-transformers — detecting when outputs drift in meaning, not just wording
-- **Classifies contradictions** using a second LLM-as-judge model
-- **Visualizes drift over time** with a heatmap dashboard + timeline charts
-- **Alerts via webhook** (Slack/Discord) when drift exceeds your threshold
+## What It Does
 
----
+- **Define behavioral baselines** — write test cases (prompts + expected behavior) once
+- **Auto-runs evals on a schedule** — every 30 minutes, fully automated
+- **Scores semantic drift** — compares outputs using embeddings, not string matching
+- **Detects contradictions** — a second LLM judges what specifically changed and why
+- **Visualizes drift over time** — heatmap dashboard with trend analysis per test case
+- **Alerts on real drift** — Slack/Discord webhook fires only on statistically significant changes
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  Next.js Dashboard                                   │
-│  Heatmap · Timeline · Test Case Manager · Alerts    │
+│  Next.js Dashboard (Vercel)                         │
+│  Drift heatmap · Trend lines · Alert banner         │
 └──────────────────────┬──────────────────────────────┘
-                       │ REST API
+                       │ REST
 ┌──────────────────────▼──────────────────────────────┐
 │  FastAPI Backend                                     │
-│  ┌─────────────┐  ┌──────────────┐  ┌────────────┐ │
-│  │ Eval Runner │  │ Drift Scorer │  │  Scheduler │ │
-│  │ (runner.py) │  │ (scorer.py)  │  │  (30 min)  │ │
-│  └──────┬──────┘  └──────┬───────┘  └────────────┘ │
-│         │                │                          │
-│  ┌──────▼──────┐  ┌──────▼───────┐                  │
-│  │  Ollama     │  │ sentence-    │                  │
-│  │  (local)    │  │ transformers │                  │
-│  │  llama3.2   │  │ (local)      │                  │
-│  │  + mistral  │  └──────────────┘                  │
-│  └─────────────┘                                    │
+│  Eval runner → Drift scorer → Contradiction judge   │
+│                                                      │
+│  Ollama (local)          sentence-transformers       │
+│  llama3.2 (test model)   all-MiniLM-L6-v2           │
+│  mistral  (judge model)  cosine similarity scoring  │
 └──────────────────────┬──────────────────────────────┘
                        │
 ┌──────────────────────▼──────────────────────────────┐
 │  Supabase (free tier)                               │
-│  test_cases · runs · drift scores                   │
+│  test_cases · runs · drift_scores                   │
 └─────────────────────────────────────────────────────┘
 ```
 
 **Key design decisions:**
-- **Local-first**: All inference runs on Ollama — no API keys, no rate limits, no costs
-- **Two-model setup**: `llama3.2` runs test cases; `mistral` acts as independent judge for contradiction detection — avoids self-preference bias
-- **Statistical significance**: z-score check prevents noise from triggering false alerts
-- **Embedding-based scoring**: Captures semantic meaning shifts, not just string differences
 
----
+- **Two-model setup** — `llama3.2` runs test cases; `mistral` acts as independent judge. Using the same model to judge itself introduces self-preference bias, so they're always separate.
+- **Embedding-based scoring** — cosine similarity between sentence embeddings captures meaning shifts, not just wording changes. "The method outputs a result" and "The function returns a value" score as near-identical, as they should.
+- **Z-score significance check** — new drift scores are compared against a rolling window of historical scores. Only statistically significant deviations (z > 2.0) trigger alerts, preventing noise from flooding you with false positives.
+- **Local-first, zero cost** — all inference runs on Ollama locally. No API keys, no rate limits, no monthly bills.
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Frontend | Next.js 14, TypeScript, Tailwind CSS |
+| Backend | FastAPI, Python 3.11 |
+| Inference | Ollama (llama3.2 + mistral) |
+| Embeddings | sentence-transformers (all-MiniLM-L6-v2) |
+| Database | Supabase (PostgreSQL) |
+| Scheduling | APScheduler |
+| Hosting | Vercel + Render (free tiers) |
 
 ## Setup
 
 ### Prerequisites
-
 ```bash
-# Install Ollama (Mac)
 brew install ollama
-ollama serve                  # start in background
-
-# Pull the two models used
-ollama pull llama3.2          # ~2GB - the test model
-ollama pull mistral           # ~4GB - the judge model
+ollama pull llama3.2
+ollama pull mistral
 ```
 
-### 1. Supabase
-
-1. Create a free project at [supabase.com](https://supabase.com)
-2. Open the SQL editor and paste the contents of `docs/schema.sql`
-3. Copy your project URL and service role key from Settings → API
-
-### 2. Backend
-
+### Backend
 ```bash
 cd backend
-python -m venv venv
-source venv/bin/activate
+python3.11 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-
-cp .env.example .env
-# Edit .env with your Supabase credentials
-
+cp .env.example .env   # add Supabase credentials
 uvicorn app.main:app --reload --port 8000
 ```
 
-Open http://localhost:8000/docs to see the API explorer.
+### Database
+Paste `docs/schema.sql` into your Supabase SQL editor and run it.
 
-### 3. Frontend
-
+### Frontend
 ```bash
 cd frontend
-npm install
-cp .env.example .env.local
-# NEXT_PUBLIC_API_URL=http://localhost:8000
-
-npm run dev
+npm install && npm run dev
 ```
 
-Open http://localhost:3000/dashboard
+Open `http://localhost:3000/dashboard`
 
-### 4. First eval run
+## How Drift Scoring Works
 
-Either wait 30 minutes for the scheduler, or hit the "Run Evals Now" button in the dashboard — or via API:
+```
+baseline output → embed → vector A ─┐
+                                     ├─ cosine similarity → drift score (0.0–1.0)
+new output      → embed → vector B ─┘
 
-```bash
-curl -X POST http://localhost:8000/api/runs/trigger-all
+< 0.05   stable    essentially identical
+0.05–0.15  low     minor wording variation
+0.15–0.30  medium  semantic shift → contradiction analysis triggered
+> 0.30   high      statistically significant → alert fires
 ```
 
----
+## Project Structure
 
-## Adding test cases
-
-Via the dashboard UI, or directly via API:
-
-```bash
-curl -X POST http://localhost:8000/api/test-cases/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Tone consistency check",
-    "description": "Model should always be helpful and professional",
-    "input_prompt": "Explain recursion to a 10-year-old.",
-    "expected_tone": "friendly",
-    "model_name": "llama3.2"
-  }'
+```
+drift-detector/
+├── backend/
+│   ├── app/
+│   │   ├── api/          # REST endpoints
+│   │   ├── core/         # DB client, scheduler
+│   │   ├── models/       # Pydantic schemas
+│   │   └── services/     # LLM, scorer, runner, alerts
+│   └── requirements.txt
+└── frontend/
+    ├── app/
+    │   ├── dashboard/    # Main heatmap view
+    │   └── test-cases/   # CRUD for test cases
+    ├── components/
+    └── lib/api.ts        # Typed API client
 ```
 
----
-
-## Deployment (free)
-
-| Service | What it hosts | Free tier |
-|---------|--------------|-----------|
-| Vercel | Next.js frontend | Unlimited hobby |
-| Render | FastAPI backend | 750 hrs/month |
-| Supabase | PostgreSQL | 500MB, 2 projects |
-
-**Note:** Render free tier spins down after 15 min inactivity. For always-on eval scheduling, use Oracle Cloud Always Free (4 OCPUs, 24GB RAM) to host the backend.
-
-```bash
-# Deploy frontend
-cd frontend && npx vercel
-
-# Deploy backend (push to GitHub, connect to Render)
-# Set environment variables in Render dashboard
-```
-
----
-
-## Tech Stack
-
-**Backend:** Python · FastAPI · Ollama · sentence-transformers · APScheduler · Supabase
-**Frontend:** Next.js 14 · TypeScript · Tailwind CSS · Recharts
-**Models (local):** llama3.2 (test model) · mistral (judge model)
-**Infrastructure:** Vercel · Render · Supabase
+## License
+MIT
